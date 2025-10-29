@@ -98,3 +98,7 @@ These steps bring the assistant online with default behaviours. From here you ca
 - Internet connectivity for OpenAI API access
 
 With these components in place you can build a friendly desk companion that speaks, listens, and interacts with the physical world through simple voice commands.
+
+## Branch Maintenance
+
+Active development happens on the `cardputer` branch, and legacy feature branches are pruned once their work is merged so the history stays easy to follow.
