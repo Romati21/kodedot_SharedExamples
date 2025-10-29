@@ -1,7 +1,12 @@
 #include <wifi_manager_lib/WiFiManager.h>
 #include <kodedot/pin_config.h>
 #include <Arduino.h>
+#ifdef CARDPUTER_TARGET
+#include <SD.h>
+#include <SPI.h>
+#else
 #include <SD_MMC.h>
+#endif
 
 // Global instance
 WiFiManager wifiManager;
@@ -14,14 +19,30 @@ const unsigned long API_UPDATE_INTERVAL = 30000; // 30s
 String OPENAI_API_KEY_STR;
 
 bool WiFiManager::ensureSDMounted() {
-    if (sdMounted) return true;
+    if (sdMounted && sdFs) return true;
+#ifdef CARDPUTER_TARGET
+    static SPIClass sdSpi(FSPI);
+    sdSpi.begin(SD_SPI_CLK, SD_SPI_MISO, SD_SPI_MOSI, SD_SPI_CS);
+    if (!SD.begin(SD_SPI_CS, sdSpi, SD_SPI_FREQ_HZ)) {
+        Serial.println("[WiFiManager] ERROR: SD card init failed (SPI mode)");
+        Serial.printf("[WiFiManager] Hint: Check SPI pins MOSI=%d MISO=%d CLK=%d CS=%d\n",
+                      SD_SPI_MOSI, SD_SPI_MISO, SD_SPI_CLK, SD_SPI_CS);
+        sdMounted = false;
+        sdFs = nullptr;
+        return false;
+    }
+    sdFs = &SD;
+#else
     SD_MMC.setPins(SD_PIN_CLK, SD_PIN_CMD, SD_PIN_D0);
     if (!SD_MMC.begin(SD_MOUNT_POINT, true)) {
         Serial.println("[WiFiManager] ERROR: SD card init failed (SD_MMC)");
         Serial.printf("[WiFiManager] Hint: Check SDMMC pins CMD=%d CLK=%d D0=%d\n", SD_PIN_CMD, SD_PIN_CLK, SD_PIN_D0);
         sdMounted = false;
+        sdFs = nullptr;
         return false;
     }
+    sdFs = &SD_MMC;
+#endif
     sdMounted = true;
     return true;
 }
@@ -31,12 +52,14 @@ bool WiFiManager::loadCredentialsFromSD() {
     Serial.println("[WiFiManager] Loading WiFi credentials from SD...");
     if (!ensureSDMounted()) return false;
 
-    if (!SD_MMC.exists("/wifi.txt")) {
+    fs::FS& fs = *sdFs;
+
+    if (!fs.exists("/wifi.txt")) {
         Serial.println("[WiFiManager] ERROR: /wifi.txt not found on SD");
         return false;
     }
 
-    File wifiFile = SD_MMC.open("/wifi.txt", FILE_READ);
+    File wifiFile = fs.open("/wifi.txt", FILE_READ);
     if (!wifiFile) {
         Serial.println("[WiFiManager] ERROR: Cannot open /wifi.txt");
         return false;
@@ -182,11 +205,12 @@ String WiFiManager::getCurrentNetworkName() {
 bool WiFiManager::loadApiKeysFromSD() {
     Serial.println("[WiFiManager] Loading API keys from SD (/apis.txt)...");
     if (!ensureSDMounted()) return false;
-    if (!SD_MMC.exists("/apis.txt")) {
+    fs::FS& fs = *sdFs;
+    if (!fs.exists("/apis.txt")) {
         Serial.println("[WiFiManager] ERROR: /apis.txt not found on SD");
         return false;
     }
-    File apis = SD_MMC.open("/apis.txt", FILE_READ);
+    File apis = fs.open("/apis.txt", FILE_READ);
     if (!apis) {
         Serial.println("[WiFiManager] ERROR: Cannot open /apis.txt");
         return false;

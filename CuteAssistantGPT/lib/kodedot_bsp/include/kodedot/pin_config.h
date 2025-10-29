@@ -1,4 +1,56 @@
 #pragma once
+
+#ifdef CARDPUTER_TARGET
+
+/* ---------- Buttons ---------- */
+#define BUTTON_TOP            -1
+#define BUTTON_BOTTOM         -1
+
+/* ---------- NeoPixel LED ---------- */
+#define LED_STRIP_PIN         -1
+#define LED_STRIP_NUM_LEDS    0
+#define LED_STRIP_RMT_RES_HZ  10000000
+#ifndef LED_STRIP_COLOR_ORDER
+#define LED_STRIP_COLOR_ORDER  NEO_GRB
+#endif
+#ifndef LED_STRIP_TIMING
+#define LED_STRIP_TIMING       NEO_KHZ800
+#endif
+
+/* ---------- LCD Panel (ST7789 240x135) ---------- */
+#define LCD_WIDTH             240
+#define LCD_HEIGHT            135
+#define LCD_DRAW_BUFF_HEIGHT  LCD_HEIGHT
+
+/* ---------- Touch (not present) ---------- */
+#define TOUCH_I2C_NUM        -1
+#define TOUCH_I2C_SCL        -1
+#define TOUCH_I2C_SDA        -1
+#define TOUCH_INT            -1
+#define TOUCH_RST            -1
+
+/* ---------- SD-Card (SPI) ---------- */
+#define SD_SPI_HOST          SPI3_HOST
+#define SD_SPI_MOSI          11
+#define SD_SPI_MISO          13
+#define SD_SPI_CLK           12
+#define SD_SPI_CS            10
+#define SD_SPI_FREQ_HZ       25000000
+#define SD_MOUNT_POINT       "/sdcard"
+#define SD_MAX_FILES         10
+#define SD_FORMAT_IF_FAIL    0
+
+/* ---------- Microphone (I2S) ---------- */
+#define MIC_I2S_SCK          42
+#define MIC_I2S_WS           41
+#define MIC_I2S_DIN          40
+
+/* ---------- NeoPixel convenience ---------- */
+#define NEO_PIXEL_PIN    LED_STRIP_PIN
+#define NEO_PIXEL_COUNT  LED_STRIP_NUM_LEDS
+
+#else
+
 /* ---------- Buttons ---------- */
 #define BUTTON_TOP            0   // GPIO_NUM_0
 // Bottom button is provided by the IO expander
@@ -97,4 +149,4 @@
 #define NEO_PIXEL_PIN    LED_STRIP_PIN
 #define NEO_PIXEL_COUNT  LED_STRIP_NUM_LEDS
 
-
+#endif
