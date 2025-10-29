@@ -17,9 +17,11 @@
 #include <vector>
 #include <ESP32Servo.h>
 #include <Wire.h>
+#ifdef CARDPUTER_TARGET
+#include <M5Unified.h>
+#else
 #include <PMIC_BQ25896.h>
-#include <Wire.h>
-#include <PMIC_BQ25896.h>
+#endif
 
 // ==================== API SELECTION ====================
 // Uncomment ONE of these to choose API implementation:
@@ -46,47 +48,58 @@ DisplayManager display;
 AudioManager audioManager;
 UIManager uiManager;
 LEDManager ledManager;
+#ifndef CARDPUTER_TARGET
 PMIC_BQ25896 pmic;
+#endif
 
 // Configuration
 static const uint32_t GUI_LOOP_DELAY_MS = 5;
 static const uint32_t WIFI_CHECK_INTERVAL_MS = 15000;
 static const uint32_t TOUCH_DEBOUNCE_MS = 200;    // Prevent rapid touches
 
+#ifdef CARDPUTER_TARGET
+// Available GPIO pins for user control on Cardputer base (configurable)
+static const int AVAILABLE_GPIOS[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+#define AVAILABLE_GPIO_LIST_STR "1,2,3,4,5,6,7,8,9,10"
+#else
 // Available GPIO pins for user control (from pinout diagram)
 static const int AVAILABLE_GPIOS[] = {1, 2, 3, 11, 12, 13, 39, 40, 41, 42};
+#define AVAILABLE_GPIO_LIST_STR "1,2,3,11,12,13,39,40,41,42"
+#endif
 static const int NUM_AVAILABLE_GPIOS = sizeof(AVAILABLE_GPIOS) / sizeof(AVAILABLE_GPIOS[0]);
 
+#ifndef CARDPUTER_TARGET
 // ==================== PMIC BQ25896 - 5V BUS CONTROL ====================
 static void initPMIC() {
     Serial.println("[PMIC] Inicializando BQ25896 para habilitar bus 5V...");
-    
+
     // NO llamar a Wire.begin() aquí - ya está inicializado por el display
     // Solo inicializar el objeto PMIC
     pmic.begin();
     delay(200);
-    
+
     // Habilitar conversión continua de ADC (1 Hz) para refrescar medidas
     pmic.setCONV_RATE(true);
     delay(50);
-    
+
     // CONFIGURAR BOOST VOLTAGE (5V típico)
     // El registro BOOSTV controla el voltaje de salida del boost
     pmic.setBOOST_LIM(true);  // Set current limit for boost
     delay(50);
-    
+
     // HABILITAR OTG/BOOST MODE - 5V de salida en el bus
     Serial.println("[PMIC] Habilitando modo OTG/Boost para 5V...");
     pmic.setOTG_CONFIG(true);  // enable OTG/boost (5V out)
     delay(100);  // Dar tiempo para que se estabilice
-    
+
     // Verificar estado
     auto vstat = pmic.get_VBUS_STAT_reg();
     bool haveUsb = vstat.pg_stat;  // Power Good on VBUS
-    
+
     Serial.printf("[PMIC] USB=%s, Estado carga=%d\n", haveUsb ? "conectado" : "no conectado", vstat.chrg_stat);
     Serial.println("[PMIC] ✅ Bus de 5V HABILITADO - Modo OTG/Boost activado");
 }
+#endif
 
 // Servo management (max 10 servos)
 #define CUTEASSISTANT_MAX_SERVOS 10
@@ -145,7 +158,7 @@ static const char* SYSTEM_PROMPT =
     "\n4. ALWAYS include both lines, even if Actions is just 'none'"
     "\n\nHARDWARE CONTROL FORMAT:"
     "\nBEGIN;GPIO(pin,state);SERVO(pin,angle);DELAY(ms);END"
-    "\nAvailable pins: 1,2,3,11,12,13,39,40,41,42"
+    "\nAvailable pins: " AVAILABLE_GPIO_LIST_STR
     "\nGPIO states: ON or OFF"
     "\nServo angles: 0-180 degrees"
     "\n\nEXAMPLES:"
@@ -862,7 +875,9 @@ void setup() {
     delay(100);
     
     // Initialize PMIC early to enable 5V bus for servos/peripherals
+#ifndef CARDPUTER_TARGET
     initPMIC();
+#endif
 
     // Initialize display and UI so user sees something immediately
     if (!display.init()) {
@@ -931,9 +946,13 @@ void setup() {
         Serial.println("[Setup] Audio streaming queue created successfully");
     }
 
-    // Initialize top button (GPIO 0) as input with pull-up
+    // Initialize primary input control
+#ifdef CARDPUTER_TARGET
+    Serial.println("[Setup] Using M5.BtnA for input control");
+#else
     pinMode(BUTTON_TOP, INPUT_PULLUP);
     Serial.println("[Setup] Button TOP configured on GPIO 0");
+#endif
 
     // NOW initialize WiFi and API credentials
     updateDisplayNow();
@@ -988,7 +1007,11 @@ void loop() {
     static bool wasTouching = false;
     static bool wasButtonPressed = false;
     bool isTouching = false;
+#ifdef CARDPUTER_TARGET
+    bool isButtonPressed = M5.BtnA.isPressed();
+#else
     bool isButtonPressed = false;
+#endif
     
     // Check current touch state
     lv_indev_t* indev = lv_indev_get_next(nullptr);
@@ -997,8 +1020,10 @@ void loop() {
         isTouching = (state == LV_INDEV_STATE_PRESSED);
     }
     
+#ifndef CARDPUTER_TARGET
     // Check top button state (active LOW with pull-up)
     isButtonPressed = (digitalRead(BUTTON_TOP) == LOW);
+#endif
     
     // Combined input: either touch or button
     bool isInputActive = isTouching || isButtonPressed;
@@ -1026,7 +1051,11 @@ void loop() {
         if (audioManager.startRecording()) {
             uiManager.postStatus("Listening...");
             if (isButtonPressed) {
+#ifdef CARDPUTER_TARGET
+                Serial.println("[Input] Recording started by BtnA - STREAMING ENABLED");
+#else
                 Serial.println("[Input] Recording started by TOP button - STREAMING ENABLED");
+#endif
             } else {
                 Serial.println("[Input] Recording started by touch - STREAMING ENABLED");
             }

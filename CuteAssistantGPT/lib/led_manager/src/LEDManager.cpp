@@ -20,8 +20,13 @@ LEDManager::~LEDManager() {
 
 bool LEDManager::init(const LEDConfig& config) {
     config_ = config;
-    
-    Serial.printf("[LEDManager] Attempting to initialize %u NeoPixels on pin %u\n", 
+
+    if (config_.count == 0 || config_.pin < 0) {
+        Serial.println("[LEDManager] No NeoPixel strip configured; skipping initialization");
+        return true;
+    }
+
+    Serial.printf("[LEDManager] Attempting to initialize %u NeoPixels on pin %u\n",
                   config_.count, config_.pin);
     
     // Create NeoPixelBus with ESP32 bit-bang method (no RMT at all)
@@ -103,7 +108,7 @@ uint32_t LEDManager::getStateColor(LEDState state) {
 
 void LEDManager::updateDisplay() {
     if (!strip_) return;
-    
+
     uint32_t color = getStateColor(currentState_);
     
     // Extract RGB components

@@ -24,6 +24,7 @@ private:
     int networkCount = 0;
     int currentNetworkIndex = -1;
     bool sdMounted = false;
+    fs::FS* sdFs = nullptr;
     ProgressCallback progressCallback = nullptr;
 
 public:
