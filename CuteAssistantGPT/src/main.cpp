@@ -17,8 +17,24 @@
 #include <vector>
 #include <ESP32Servo.h>
 #include <Wire.h>
-#ifdef CARDPUTER_TARGET
+#if defined(CARDPUTER_TARGET) || defined(CORES3_LITE_TARGET)
 #include <M5Unified.h>
+
+// Compile-time M5Unified version check per FR-015/A-001
+// M5Unified version format: M5UNIFIED_VERSION = 0xMMNNPP (Major.Minor.Patch)
+// Required: 0.1.16-0.1.x (0x000116 to 0x0001FF)
+#ifndef M5UNIFIED_VERSION
+#error "M5UNIFIED_VERSION not defined. Please update M5Unified library."
+#endif
+
+#if M5UNIFIED_VERSION < 0x000116
+#error "M5Unified version too old. Minimum required: 0.1.16"
+#endif
+
+#if M5UNIFIED_VERSION >= 0x000200
+#error "M5Unified version 0.2.x+ not supported. Maximum supported: 0.1.x"
+#endif
+
 #else
 #include <PMIC_BQ25896.h>
 #endif
@@ -48,7 +64,7 @@ DisplayManager display;
 AudioManager audioManager;
 UIManager uiManager;
 LEDManager ledManager;
-#ifndef CARDPUTER_TARGET
+#if !defined(CARDPUTER_TARGET) && !defined(CORES3_LITE_TARGET)
 PMIC_BQ25896 pmic;
 #endif
 
@@ -57,7 +73,11 @@ static const uint32_t GUI_LOOP_DELAY_MS = 5;
 static const uint32_t WIFI_CHECK_INTERVAL_MS = 15000;
 static const uint32_t TOUCH_DEBOUNCE_MS = 200;    // Prevent rapid touches
 
-#ifdef CARDPUTER_TARGET
+#ifdef CORES3_LITE_TARGET
+// Available GPIO pins for user control on CoreS3-Lite (GPIO 14 excluded - microphone I2S DIN)
+static const int AVAILABLE_GPIOS[] = {1, 2, 5, 6, 7, 8, 9, 10, 11, 12, 13, 18};
+#define AVAILABLE_GPIO_LIST_STR "1,2,5,6,7,8,9,10,11,12,13,18"
+#elif defined(CARDPUTER_TARGET)
 // Available GPIO pins for user control on Cardputer base (configurable)
 static const int AVAILABLE_GPIOS[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
 #define AVAILABLE_GPIO_LIST_STR "1,2,3,4,5,6,7,8,9,10"
@@ -68,7 +88,7 @@ static const int AVAILABLE_GPIOS[] = {1, 2, 3, 11, 12, 13, 39, 40, 41, 42};
 #endif
 static const int NUM_AVAILABLE_GPIOS = sizeof(AVAILABLE_GPIOS) / sizeof(AVAILABLE_GPIOS[0]);
 
-#ifndef CARDPUTER_TARGET
+#if !defined(CARDPUTER_TARGET) && !defined(CORES3_LITE_TARGET)
 // ==================== PMIC BQ25896 - 5V BUS CONTROL ====================
 static void initPMIC() {
     Serial.println("[PMIC] Inicializando BQ25896 para habilitar bus 5V...");
@@ -209,6 +229,14 @@ static QueueHandle_t g_audio_chunk_queue = nullptr; // streaming audio chunks
 static uint32_t g_last_touch_ms = 0; // Touch debouncing
 static std::vector<ChatMessage> g_conversation_history; // Memory for context
 static bool g_streaming_active = false; // Flag to control streaming
+
+// Battery monitoring (CoreS3-Lite/Cardputer only)
+#if defined(CORES3_LITE_TARGET) || defined(CARDPUTER_TARGET)
+static uint8_t g_battery_percent = 100; // Cached battery percentage
+static uint32_t g_last_battery_check_ms = 0; // Last battery check timestamp
+static const uint32_t BATTERY_CHECK_INTERVAL_MS = 30000; // 30 seconds per SC-007
+static bool g_recording_blocked_low_battery = false; // Block recording when battery <5%
+#endif
 
 // Forward declarations
 static void openaiTask(void *arg); // OpenAI task declaration
@@ -866,16 +894,53 @@ static void openaiTask(void *arg) {
     vTaskDelete(nullptr);
 }
 
+// Battery monitoring for M5Unified devices (CoreS3-Lite, Cardputer)
+#if defined(CORES3_LITE_TARGET) || defined(CARDPUTER_TARGET)
+static void updateBatteryStatus() {
+    uint32_t now = millis();
+    if (now - g_last_battery_check_ms < BATTERY_CHECK_INTERVAL_MS) {
+        return; // Too soon to check again
+    }
+    g_last_battery_check_ms = now;
+
+    // Get battery level via M5Unified API
+    g_battery_percent = M5.Power.getBatteryLevel();
+
+    Serial.printf("[Power] Battery: %u%%\n", (unsigned)g_battery_percent);
+
+    // Check critical threshold (<5% per clarification FR-011a)
+    bool is_charging = M5.Power.isCharging();
+    bool was_blocked = g_recording_blocked_low_battery;
+
+    if (g_battery_percent < 5 && !is_charging) {
+        g_recording_blocked_low_battery = true;
+        if (!was_blocked) {
+            Serial.println("[Power] Battery critical (<5%), recording blocked");
+            uiManager.postStatus("Battery <5%");
+        }
+    } else {
+        if (was_blocked && is_charging) {
+            Serial.println("[Power] Charging detected, recording enabled");
+        }
+        g_recording_blocked_low_battery = false;
+    }
+
+    // Update UI with battery percentage (T032 implementation)
+    // UIManager will display this value in top-right corner
+    uiManager.setBatteryPercent(g_battery_percent);
+}
+#endif
+
 void setup() {
     Serial.begin(115200);
     Serial.println("CuteAssistant starting...");
 
-    // Initialize I2C bus FIRST (shared by display, touch, PMIC)
+#if !defined(CARDPUTER_TARGET) && !defined(CORES3_LITE_TARGET)
+    // Initialize I2C bus FIRST (shared by display, touch, PMIC) - Kode Dot only
     Wire.begin(TOUCH_I2C_SDA, TOUCH_I2C_SCL);
     delay(100);
-    
+
     // Initialize PMIC early to enable 5V bus for servos/peripherals
-#ifndef CARDPUTER_TARGET
     initPMIC();
 #endif
 
@@ -947,8 +1012,8 @@ void setup() {
     }
 
     // Initialize primary input control
-#ifdef CARDPUTER_TARGET
-    Serial.println("[Setup] Using M5.BtnA for input control");
+#if defined(CARDPUTER_TARGET) || defined(CORES3_LITE_TARGET)
+    Serial.println("[Setup] Using M5 buttons for input control");
 #else
     pinMode(BUTTON_TOP, INPUT_PULLUP);
     Serial.println("[Setup] Button TOP configured on GPIO 0");
@@ -999,15 +1064,20 @@ void loop() {
     uiManager.update();
     audioManager.service();
     ledDrainRequests();
-    
+
     // Update GPIO command sequence state machine
     updateCommandSequence();
+
+#if defined(CORES3_LITE_TARGET) || defined(CARDPUTER_TARGET)
+    // Update battery status every 30 seconds (T031)
+    updateBatteryStatus();
+#endif
     
     // Touch/Button handling for recording: press to start, release to stop
     static bool wasTouching = false;
     static bool wasButtonPressed = false;
     bool isTouching = false;
-#ifdef CARDPUTER_TARGET
+#if defined(CARDPUTER_TARGET) || defined(CORES3_LITE_TARGET)
     bool isButtonPressed = M5.BtnA.isPressed();
 #else
     bool isButtonPressed = false;
@@ -1019,8 +1089,8 @@ void loop() {
         lv_indev_state_t state = lv_indev_get_state(indev);
         isTouching = (state == LV_INDEV_STATE_PRESSED);
     }
-    
-#ifndef CARDPUTER_TARGET
+
+#if !defined(CARDPUTER_TARGET) && !defined(CORES3_LITE_TARGET)
     // Check top button state (active LOW with pull-up)
     isButtonPressed = (digitalRead(BUTTON_TOP) == LOW);
 #endif
@@ -1030,29 +1100,39 @@ void loop() {
     bool wasInputActive = wasTouching || wasButtonPressed;
     
     // Detect input press edge (touch or button) - start recording
-    if (isInputActive && !wasInputActive && 
+    if (isInputActive && !wasInputActive &&
         audioManager.getState() == RecordingState::Idle &&
         g_openai_task == nullptr &&
         millis() - g_last_touch_ms > TOUCH_DEBOUNCE_MS) {
-        
+
         g_last_touch_ms = millis();
-        
+
+#if defined(CORES3_LITE_TARGET) || defined(CARDPUTER_TARGET)
+        // Check battery level before allowing recording (T034)
+        if (g_recording_blocked_low_battery) {
+            Serial.println("[Power] Recording blocked: Battery critical (<5%)");
+            uiManager.postStatus("Charge battery");
+            uiManager.postStateChange(UIState::Error);
+            goto skip_recording; // Skip to end of this block
+        }
+#endif
+
         // Clear chunk queue before starting
         AudioChunk chunk;
         while (xQueueReceive(g_audio_chunk_queue, &chunk, 0) == pdTRUE) {
             free(chunk.data);
         }
-        
+
         // Enable streaming
         g_streaming_active = true;
-        
+
         // Start recording
         uiManager.setResponse("");
         if (audioManager.startRecording()) {
             uiManager.postStatus("Listening...");
             if (isButtonPressed) {
-#ifdef CARDPUTER_TARGET
-                Serial.println("[Input] Recording started by BtnA - STREAMING ENABLED");
+#if defined(CARDPUTER_TARGET) || defined(CORES3_LITE_TARGET)
+                Serial.println("[Input] Recording started by M5 button - STREAMING ENABLED");
 #else
                 Serial.println("[Input] Recording started by TOP button - STREAMING ENABLED");
 #endif
@@ -1064,8 +1144,13 @@ void loop() {
             uiManager.postStateChange(UIState::Error);
             g_streaming_active = false;
         }
+
+#if defined(CORES3_LITE_TARGET) || defined(CARDPUTER_TARGET)
+skip_recording: // Label for battery check goto
+        (void)0; // No-op statement for label
+#endif
     }
-    
+
     // Detect input release edge (touch or button) - stop recording
     if (!isInputActive && wasInputActive && 
         audioManager.getState() == RecordingState::Recording) {

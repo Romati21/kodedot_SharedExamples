@@ -1,4 +1,5 @@
 #include "ui_manager/UIManager.h"
+#include <kodedot/pin_config.h>
 #include <cstring>
 
 // External LVGL images for GPT logo
@@ -20,6 +21,7 @@ UIManager::UIManager()
     , responseTextArea_(nullptr)
     , usbStatusBottom_(nullptr)
     , gptLogo_(nullptr)
+    , batteryLabel_(nullptr)
     , showingEyes_(true)
     , eyeAnimationTimer_(nullptr)
     , blinkTimer_(nullptr)
@@ -272,6 +274,8 @@ void UIManager::setupStyles() {
     lv_style_set_bg_opa(&styleTextArea_, LV_OPA_TRANSP);
     lv_style_set_text_color(&styleTextArea_, KODE_TEXT_LIGHT);
     lv_style_set_text_font(&styleTextArea_, &Inter_30);
+    // UI Standards: line spacing ≥1.2x font height (30px * 1.2 = 36px spacing)
+    lv_style_set_text_line_space(&styleTextArea_, 36);
     
     // Status badge style
     lv_style_init(&styleStatus_);
@@ -324,6 +328,15 @@ void UIManager::createUI() {
 
     // Create GPT logo (top-right)
     createGPTLogo();
+
+    // Create battery indicator (CoreS3-Lite/Cardputer only)
+#if defined(CORES3_LITE_TARGET) || defined(CARDPUTER_TARGET)
+    batteryLabel_ = lv_label_create(scr);
+    lv_label_set_text(batteryLabel_, "100%");
+    lv_obj_align(batteryLabel_, LV_ALIGN_TOP_RIGHT, -10, 60);  // Below GPT logo
+    lv_obj_set_style_text_color(batteryLabel_, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_font(batteryLabel_, &lv_font_montserrat_14, 0);
+#endif
 
     // Status badge overlayed on screen (hidden - no longer used)
     statusLabel_ = lv_label_create(scr);
@@ -517,11 +530,18 @@ const char* UIManager::getStateLabel(UIState state) {
 // Eye creation and management
 void UIManager::createEyes() {
     lv_obj_t* scr = lv_scr_act();
-    
-    // Eye dimensions - wider rectangular eyes (robotic look)
+
+#ifdef CORES3_LITE_TARGET
+    // Eye dimensions for CoreS3-Lite (320x240) - smaller circular eyes
+    const lv_coord_t eyeWidth = 80;   // Circular 80px diameter
+    const lv_coord_t eyeHeight = 80;  // Circular
+    const lv_coord_t eyeSpacing = 20; // Tighter spacing for smaller screen
+#else
+    // Eye dimensions for Kode Dot/Cardputer - wider rectangular eyes (robotic look)
     const lv_coord_t eyeWidth = 140;  // Much wider
     const lv_coord_t eyeHeight = 100; // Same height
     const lv_coord_t eyeSpacing = 30; // Closer spacing
+#endif
     
     // Left eye
     leftEye_ = lv_obj_create(scr);
@@ -561,14 +581,23 @@ void UIManager::createEyes() {
 
 void UIManager::createTextDisplay() {
     lv_obj_t* scr = lv_scr_act();
-    
+
     // Response text area - centered, word wrap enabled
     responseTextArea_ = lv_label_create(scr);
+
+#ifdef CORES3_LITE_TARGET
+    // CoreS3-Lite (320x240): Fixed text area at bottom (x=10, y=180, w=300, h=50)
+    lv_obj_set_size(responseTextArea_, 300, 50);
+    lv_obj_set_pos(responseTextArea_, 10, 180);
+#else
+    // Kode Dot/Cardputer: Dynamic sizing based on screen resolution
     lv_obj_set_size(responseTextArea_, LV_HOR_RES - 40, LV_VER_RES - 100);
+    lv_obj_center(responseTextArea_);
+#endif
+
     lv_obj_add_style(responseTextArea_, &styleTextArea_, 0);
     lv_label_set_long_mode(responseTextArea_, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(responseTextArea_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_center(responseTextArea_);
     lv_obj_add_flag(responseTextArea_, LV_OBJ_FLAG_HIDDEN); // Hidden by default
 }
 
@@ -801,12 +830,23 @@ void UIManager::setEyePosition(int32_t leftX, int32_t leftY, int32_t rightX, int
 // Typewriter animation implementation
 void UIManager::startTypewriterAnimation(const char* text) {
     if (!text || !responseTextArea_) return;
-    
+
     // Stop any existing typewriter animation
     stopTypewriterAnimation();
-    
+
     // Setup typewriter animation
     pendingText_ = String(text);
+
+#ifdef CORES3_LITE_TARGET
+    // CoreS3-Lite: Truncate long text for small screen (300x50px text area)
+    // ~2 lines of 30px font = max ~100 characters (including spaces/wrapping)
+    const size_t MAX_TEXT_LENGTH = 100;
+    if (pendingText_.length() > MAX_TEXT_LENGTH) {
+        pendingText_ = pendingText_.substring(0, MAX_TEXT_LENGTH - 3) + "...";
+        Serial.printf("[UIManager] Text truncated to %d chars for CoreS3 display\n", pendingText_.length());
+    }
+#endif
+
     currentCharIndex_ = 0;
     isTypewriting_ = true;
     
@@ -903,6 +943,31 @@ void UIManager::setTypewriterSpeed(uint32_t delayMs) {
 void UIManager::setUSBConnectionStatus(bool connected) {
     // Not used in CuteAssistant mode
     (void)connected;
+}
+
+void UIManager::setBatteryPercent(uint8_t percent) {
+#if defined(CORES3_LITE_TARGET) || defined(CARDPUTER_TARGET)
+    if (!batteryLabel_) return;
+
+    // Format battery text
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%u%%", percent);
+    lv_label_set_text(batteryLabel_, buf);
+
+    // Change color based on battery level
+    // Red <20%, Yellow <50%, White >=50%
+    lv_color_t color;
+    if (percent < 20) {
+        color = lv_color_hex(0xFF0000);  // Red
+    } else if (percent < 50) {
+        color = lv_color_hex(0xFFFF00);  // Yellow
+    } else {
+        color = lv_color_hex(0xFFFFFF);  // White
+    }
+    lv_obj_set_style_text_color(batteryLabel_, color, 0);
+#else
+    (void)percent;  // Suppress unused parameter warning
+#endif
 }
 
 bool UIManager::isTouchPressed() {

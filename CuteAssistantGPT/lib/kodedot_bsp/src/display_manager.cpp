@@ -4,7 +4,7 @@
 // Forward declarations for internal helpers
 extern "C" void __wrap_esp_ota_mark_app_valid_cancel_rollback(void);
 static void init_nvs();
-#ifndef CARDPUTER_TARGET
+#if !defined(CARDPUTER_TARGET) && !defined(CORES3_LITE_TARGET)
 static void lvgl_port_rounder_callback(lv_display_t *disp, lv_area_t *area);
 static void display_rounder_event_cb(lv_event_t *e);
 #endif
@@ -24,7 +24,7 @@ static void init_nvs() {
     prefs.begin("kode_storage", false);
 }
 
-#ifndef CARDPUTER_TARGET
+#if !defined(CARDPUTER_TARGET) && !defined(CORES3_LITE_TARGET)
 static void lvgl_port_rounder_callback(lv_display_t *disp, lv_area_t *area) {
     // Efficiently align area to even/odd boundaries as required by the panel
     area->x1 &= ~1;  // round down to even
@@ -46,7 +46,7 @@ static void display_rounder_event_cb(lv_event_t *e) {
 }
 #endif
 
-#ifdef CARDPUTER_TARGET
+#if defined(CARDPUTER_TARGET) || defined(CORES3_LITE_TARGET)
 DisplayManager::DisplayManager()
     : display(nullptr)
     , buf(nullptr)
@@ -69,7 +69,7 @@ DisplayManager::DisplayManager()
 DisplayManager::~DisplayManager() {
     if (buf) free(buf);
     if (buf2) free(buf2);
-#ifndef CARDPUTER_TARGET
+#if !defined(CARDPUTER_TARGET) && !defined(CORES3_LITE_TARGET)
     if (gfx) {
         delete gfx;
     }
@@ -80,7 +80,68 @@ DisplayManager::~DisplayManager() {
     instance = nullptr;
 }
 
-#ifdef CARDPUTER_TARGET
+#ifdef CORES3_LITE_TARGET
+bool DisplayManager::init() {
+    Serial.println("[Display] Initializing CoreS3 display (320x240)...");
+
+    init_nvs();
+
+    auto cfg = M5.config();
+    cfg.output_power = true;
+    cfg.serial_baudrate = 115200;
+    M5.begin(cfg);
+
+    M5.Display.setRotation(1);
+
+    uint8_t saved_pct = prefs.getUChar("brightness", 50);
+    if (saved_pct < 10) saved_pct = 10;
+    if (saved_pct > 100) saved_pct = 100;
+    uint8_t hardware_brightness = (uint8_t)(((uint16_t)saved_pct * 255 + 50) / 100);
+    M5.Display.setBrightness(hardware_brightness);
+    Serial.printf("[Display] Brightness configured: %u%% (%u/255) from NVS storage\n",
+                  (unsigned)saved_pct, (unsigned)hardware_brightness);
+
+    M5.Display.fillScreen(0x0000);
+
+    lv_init();
+    last_tick_ms = millis();
+
+    size_t draw_buf_pixels = (size_t)LCD_WIDTH * (size_t)LCD_DRAW_BUFF_HEIGHT;
+    size_t draw_buf_bytes = draw_buf_pixels * sizeof(lv_color_t);
+    Serial.printf("[Display] Requesting LVGL draw buffer: %u bytes\n", (unsigned)draw_buf_bytes);
+
+    buf = (lv_color_t*)heap_caps_malloc(draw_buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) {
+        buf = (lv_color_t*)heap_caps_malloc(draw_buf_bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+        if (!buf) {
+            Serial.println("[Display] Error: unable to allocate LVGL buffer");
+            return false;
+        }
+    }
+
+    buf2 = (lv_color_t*)heap_caps_malloc(draw_buf_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf2) {
+        buf2 = nullptr;
+    }
+
+    display = lv_display_create(LCD_WIDTH, LCD_HEIGHT);
+    lv_display_set_color_format(display, LV_COLOR_FORMAT_RGB565);
+    lv_display_set_flush_cb(display, disp_flush_callback);
+    lv_display_set_buffers(
+        display,
+        buf,
+        buf2,
+        (uint32_t)draw_buf_bytes,
+        LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+    lv_indev_t *indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, touchpad_read_callback);
+
+    Serial.println("[Display] CoreS3 display subsystem ready");
+    return true;
+}
+#elif defined(CARDPUTER_TARGET)
 bool DisplayManager::init() {
     Serial.println("[Display] Bringing up Cardputer display subsystem...");
 
@@ -259,7 +320,7 @@ bool DisplayManager::init() {
 #endif
 
 void DisplayManager::update() {
-#ifdef CARDPUTER_TARGET
+#if defined(CARDPUTER_TARGET) || defined(CORES3_LITE_TARGET)
     M5.update();
 #endif
     // Advance LVGL tick with real delta
@@ -271,7 +332,7 @@ void DisplayManager::update() {
 }
 
 void DisplayManager::setBrightness(uint8_t brightness) {
-#ifdef CARDPUTER_TARGET
+#if defined(CARDPUTER_TARGET) || defined(CORES3_LITE_TARGET)
     M5.Display.setBrightness(brightness);
 #else
     if (gfx) {
@@ -296,7 +357,17 @@ uint8_t DisplayManager::getBrightnessPercentage() {
 }
 
 bool DisplayManager::getTouchCoordinates(int16_t &x, int16_t &y) {
-#ifdef CARDPUTER_TARGET
+#ifdef CORES3_LITE_TARGET
+    if (M5.Touch.getCount() > 0) {
+        auto detail = M5.Touch.getDetail(0);
+        if (detail.wasPressed()) {
+            x = detail.x;
+            y = detail.y;
+            return true;
+        }
+    }
+    return false;
+#elif defined(CARDPUTER_TARGET)
     bool pressed = M5.BtnA.isPressed();
     if (pressed) {
         x = LCD_WIDTH / 2;
@@ -316,7 +387,7 @@ bool DisplayManager::getTouchCoordinates(int16_t &x, int16_t &y) {
 }
 
 void DisplayManager::disp_flush_callback(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map) {
-#ifdef CARDPUTER_TARGET
+#if defined(CARDPUTER_TARGET) || defined(CORES3_LITE_TARGET)
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
     M5.Display.startWrite();
@@ -340,7 +411,20 @@ void DisplayManager::disp_flush_callback(lv_display_t *disp, const lv_area_t *ar
 }
 
 void DisplayManager::touchpad_read_callback(lv_indev_t *indev, lv_indev_data_t *data) {
-#ifdef CARDPUTER_TARGET
+#ifdef CORES3_LITE_TARGET
+    if (M5.Touch.getCount() > 0) {
+        auto detail = M5.Touch.getDetail(0);
+        if (detail.wasPressed() || detail.isPressed()) {
+            data->state = LV_INDEV_STATE_PRESSED;
+            data->point.x = detail.x;
+            data->point.y = detail.y;
+        } else {
+            data->state = LV_INDEV_STATE_RELEASED;
+        }
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+    }
+#elif defined(CARDPUTER_TARGET)
     bool pressed = M5.BtnA.isPressed();
     if (pressed) {
         data->state = LV_INDEV_STATE_PRESSED;

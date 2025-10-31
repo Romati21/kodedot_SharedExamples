@@ -51,7 +51,10 @@ public:
     
     // Touch event handling
     bool isTouchPressed();
-    
+
+    // Battery display (CoreS3-Lite/Cardputer only)
+    void setBatteryPercent(uint8_t percent);
+
 private:
     // UI elements - Eyes
     lv_obj_t* leftEye_;
@@ -65,7 +68,9 @@ private:
     lv_obj_t* usbStatusBottom_;
     // UI elements - GPT logo (top-right)
     lv_obj_t* gptLogo_;
-    
+    // UI elements - Battery indicator (CoreS3-Lite/Cardputer)
+    lv_obj_t* batteryLabel_;
+
     // Display mode
     bool showingEyes_;
     

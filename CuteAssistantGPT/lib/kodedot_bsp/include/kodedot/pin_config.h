@@ -1,6 +1,53 @@
 #pragma once
 
-#ifdef CARDPUTER_TARGET
+#ifdef CORES3_LITE_TARGET
+
+/* ---------- Buttons ---------- */
+#define BUTTON_TOP            0   // BtnA
+#define BUTTON_BOTTOM         1   // BtnB
+
+/* ---------- NeoPixel LED ---------- */
+#define LED_STRIP_PIN         -1  // CoreS3-Lite has no NeoPixel
+#define LED_STRIP_NUM_LEDS    0
+#define LED_STRIP_RMT_RES_HZ  10000000
+#ifndef LED_STRIP_COLOR_ORDER
+#define LED_STRIP_COLOR_ORDER  NEO_GRB
+#endif
+#ifndef LED_STRIP_TIMING
+#define LED_STRIP_TIMING       NEO_KHZ800
+#endif
+
+/* ---------- LCD Panel (ILI9342C 320x240) ---------- */
+#define LCD_WIDTH             320
+#define LCD_HEIGHT            240
+#define LCD_DRAW_BUFF_HEIGHT  LCD_HEIGHT
+
+/* ---------- Touch (FT6336U via M5Unified) ---------- */
+#define TOUCH_I2C_NUM        -1   // Managed by M5Unified
+#define TOUCH_I2C_SCL        -1
+#define TOUCH_I2C_SDA        -1
+#define TOUCH_INT            -1
+#define TOUCH_RST            -1
+
+/* ---------- SD-Card (SPI via M5Unified) ---------- */
+#define SD_SPI_HOST          SPI3_HOST
+#define SD_MOUNT_POINT       "/sdcard"
+#define SD_MAX_FILES         10
+#define SD_FORMAT_IF_FAIL    0
+
+/* ---------- Microphone (ES7210 I2S) ---------- */
+#define MIC_I2S_SCK          34
+#define MIC_I2S_WS           33
+#define MIC_I2S_DIN          14
+
+/* ---------- Power Management (AXP2101 PMIC) ---------- */
+// Managed by M5Unified M5.Power API
+
+/* ---------- NeoPixel convenience ---------- */
+#define NEO_PIXEL_PIN    LED_STRIP_PIN
+#define NEO_PIXEL_COUNT  LED_STRIP_NUM_LEDS
+
+#elif defined(CARDPUTER_TARGET)
 
 /* ---------- Buttons ---------- */
 #define BUTTON_TOP            -1

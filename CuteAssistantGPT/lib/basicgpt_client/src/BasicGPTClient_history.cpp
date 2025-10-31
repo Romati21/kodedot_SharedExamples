@@ -148,10 +148,23 @@ bool BasicGPTClient::askAudioFromPCMWithHistory(const uint8_t* pcmData,
 
     // Read response
     String status = client.readStringUntil('\n');
-    bool httpOk = (status.indexOf(" 200 ") >= 0);
-    if (!httpOk) {
-        Serial.print("[BasicGPTClient] HTTP status: "); Serial.println(status);
+    if (status.length() == 0) {
+        Serial.println("[BasicGPTClient] ERROR: Empty HTTP status line (timeout?)");
+        outText = BasicGPTClient::getErrorMessage(0, true);  // Connection lost
+        client.stop();
+        return false;
     }
+
+    int httpCode = BasicGPTClient::extractHttpCode(status);
+    bool httpOk = (httpCode == 200);
+
+    if (!httpOk) {
+        Serial.printf("[BasicGPTClient] HTTP error %d: %s\n", httpCode, status.c_str());
+        outText = BasicGPTClient::getErrorMessage(httpCode, false);
+        client.stop();
+        return false;
+    }
+
     while (client.connected()) {
         String h = client.readStringUntil('\n');
         if (h == "\r") break;
@@ -166,9 +179,11 @@ bool BasicGPTClient::askAudioFromPCMWithHistory(const uint8_t* pcmData,
     }
     client.stop();
 
-    outText = extractAssistantText(body);
+    outText = BasicGPTClient::extractAssistantText(body);
     if (outText.length() == 0) {
         Serial.println("[BasicGPTClient] ERROR: Could not parse assistant text");
+        outText = "Parse error";
+        return false;
     }
-    return outText.length() > 0;
+    return true;
 }

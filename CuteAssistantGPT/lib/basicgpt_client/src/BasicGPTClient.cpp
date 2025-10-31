@@ -95,6 +95,43 @@ String BasicGPTClient::extractAssistantText(const String& body) {
     return "";
 }
 
+// Extract HTTP status code from status line (e.g., "HTTP/1.1 401 Unauthorized" -> 401)
+int BasicGPTClient::extractHttpCode(const String& statusLine) {
+    int spacePos1 = statusLine.indexOf(' ');
+    if (spacePos1 < 0) return 0;
+    int spacePos2 = statusLine.indexOf(' ', spacePos1 + 1);
+    if (spacePos2 < 0) return 0;
+    String codeStr = statusLine.substring(spacePos1 + 1, spacePos2);
+    return codeStr.toInt();
+}
+
+// Map HTTP status code to user-friendly error message per FR-015
+String BasicGPTClient::getErrorMessage(int httpCode, bool isTimeout) {
+    if (isTimeout) {
+        return "Connection lost";
+    }
+    switch (httpCode) {
+        case 401:
+            return "Check API key";
+        case 429:
+            return "Too many requests";
+        case 400:
+            return "Bad request";
+        case 500:
+        case 502:
+        case 503:
+            return "OpenAI unavailable";
+        default:
+            if (httpCode >= 500 && httpCode < 600) {
+                return "OpenAI unavailable";
+            } else if (httpCode >= 400 && httpCode < 500) {
+                return "Client error";
+            } else {
+                return "Unknown error";
+            }
+    }
+}
+
 void BasicGPTClient::buildWavHeader(uint8_t* hdr44,
                                     uint32_t sampleRate,
                                     uint16_t bitsPerSample,
@@ -276,12 +313,22 @@ bool BasicGPTClient::askAudioFromPCM(const uint8_t* pcmData,
     // Read response
     String status = client.readStringUntil('\n');
     if (status.length() == 0) {
-        Serial.println("[BasicGPTClient] ERROR: Empty HTTP status line");
+        Serial.println("[BasicGPTClient] ERROR: Empty HTTP status line (timeout?)");
+        outText = getErrorMessage(0, true);  // Connection lost
+        client.stop();
+        return false;
     }
-    bool httpOk = (status.indexOf(" 200 ") >= 0 || status.startsWith("HTTP/1.1 200") || status.startsWith("HTTP/1.0 200"));
+
+    int httpCode = extractHttpCode(status);
+    bool httpOk = (httpCode == 200);
+
     if (!httpOk) {
-        Serial.print("[BasicGPTClient] HTTP status: "); Serial.println(status);
+        Serial.printf("[BasicGPTClient] HTTP error %d: %s\n", httpCode, status.c_str());
+        outText = getErrorMessage(httpCode, false);
+        client.stop();
+        return false;
     }
+
     while (client.connected()) {
         String hline = client.readStringUntil('\n');
         if (hline == "\r") break;
@@ -299,8 +346,10 @@ bool BasicGPTClient::askAudioFromPCM(const uint8_t* pcmData,
     outText = extractAssistantText(body);
     if (outText.length() == 0) {
         Serial.println("[BasicGPTClient] ERROR: Could not parse assistant text from response body");
+        outText = "Parse error";
+        return false;
     }
-    return outText.length() > 0;
+    return true;
 }
 
 bool BasicGPTClient::askAudioFromWav(const char* wavPath, String& outText) {
@@ -383,12 +432,22 @@ bool BasicGPTClient::askAudioFromWav(const char* wavPath, String& outText) {
     // Read response
     String status = client.readStringUntil('\n');
     if (status.length() == 0) {
-        Serial.println("[BasicGPTClient] ERROR: Empty HTTP status line");
+        Serial.println("[BasicGPTClient] ERROR: Empty HTTP status line (timeout?)");
+        outText = getErrorMessage(0, true);  // Connection lost
+        client.stop();
+        return false;
     }
-    bool httpOk = (status.indexOf(" 200 ") >= 0 || status.startsWith("HTTP/1.1 200") || status.startsWith("HTTP/1.0 200"));
+
+    int httpCode = extractHttpCode(status);
+    bool httpOk = (httpCode == 200);
+
     if (!httpOk) {
-        Serial.print("[BasicGPTClient] HTTP status: "); Serial.println(status);
+        Serial.printf("[BasicGPTClient] HTTP error %d: %s\n", httpCode, status.c_str());
+        outText = getErrorMessage(httpCode, false);
+        client.stop();
+        return false;
     }
+
     while (client.connected()) {
         String h = client.readStringUntil('\n');
         if (h == "\r") break;
@@ -406,8 +465,10 @@ bool BasicGPTClient::askAudioFromWav(const char* wavPath, String& outText) {
     outText = extractAssistantText(body);
     if (outText.length() == 0) {
         Serial.println("[BasicGPTClient] ERROR: Could not parse assistant text from response body");
+        outText = "Parse error";
+        return false;
     }
-    return outText.length() > 0;
+    return true;
 }
 
 

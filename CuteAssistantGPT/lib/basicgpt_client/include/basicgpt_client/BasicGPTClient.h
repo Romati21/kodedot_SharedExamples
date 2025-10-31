@@ -73,6 +73,10 @@ private:
                                uint16_t channels,
                                uint32_t dataBytes);
 
+    // HTTP error handling helpers (FR-015)
+    static int extractHttpCode(const String& statusLine);
+    static String getErrorMessage(int httpCode, bool isTimeout = false);
+
     // Internal validation helpers
     inline bool isConfigValid() const {
         return (cfg_.host && cfg_.host[0] != '\0') &&

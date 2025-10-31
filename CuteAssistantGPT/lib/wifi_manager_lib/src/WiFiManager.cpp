@@ -1,7 +1,7 @@
 #include <wifi_manager_lib/WiFiManager.h>
 #include <kodedot/pin_config.h>
 #include <Arduino.h>
-#ifdef CARDPUTER_TARGET
+#if defined(CARDPUTER_TARGET) || defined(CORES3_LITE_TARGET)
 #include <SD.h>
 #include <SPI.h>
 #else
@@ -20,7 +20,19 @@ String OPENAI_API_KEY_STR;
 
 bool WiFiManager::ensureSDMounted() {
     if (sdMounted && sdFs) return true;
-#ifdef CARDPUTER_TARGET
+#ifdef CORES3_LITE_TARGET
+    // CoreS3-Lite: M5Unified manages SD card automatically via M5.begin()
+    // SD is already initialized, just need to verify it's accessible
+    if (!SD.begin()) {
+        Serial.println("[WiFiManager] ERROR: SD card not accessible (CoreS3-Lite M5Unified)");
+        Serial.println("[WiFiManager] Hint: Ensure SD card is inserted and M5.begin() was called");
+        sdMounted = false;
+        sdFs = nullptr;
+        return false;
+    }
+    sdFs = &SD;
+    Serial.println("[WiFiManager] SD card mounted via M5Unified (CoreS3-Lite)");
+#elif defined(CARDPUTER_TARGET)
     static SPIClass sdSpi(FSPI);
     sdSpi.begin(SD_SPI_CLK, SD_SPI_MISO, SD_SPI_MOSI, SD_SPI_CS);
     if (!SD.begin(SD_SPI_CS, sdSpi, SD_SPI_FREQ_HZ)) {
@@ -32,6 +44,7 @@ bool WiFiManager::ensureSDMounted() {
         return false;
     }
     sdFs = &SD;
+    Serial.println("[WiFiManager] SD card mounted via SPI (Cardputer)");
 #else
     SD_MMC.setPins(SD_PIN_CLK, SD_PIN_CMD, SD_PIN_D0);
     if (!SD_MMC.begin(SD_MOUNT_POINT, true)) {
@@ -42,6 +55,7 @@ bool WiFiManager::ensureSDMounted() {
         return false;
     }
     sdFs = &SD_MMC;
+    Serial.println("[WiFiManager] SD card mounted via SD_MMC (Kode Dot)");
 #endif
     sdMounted = true;
     return true;
