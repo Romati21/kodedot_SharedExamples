@@ -49,6 +49,7 @@
 #include <ui_manager/UIManager.h>
 #include <led_manager/LEDManager.h>
 #include <wifi_manager_lib/WiFiManager.h>
+#include <sensor_manager/SensorManager.h>
 
 #ifdef USE_REALTIME_API
 #include <realtime_client/RealtimeClient.h>
@@ -64,6 +65,7 @@ DisplayManager display;
 AudioManager audioManager;
 UIManager uiManager;
 LEDManager ledManager;
+SensorManager sensorManager;
 #if !defined(CARDPUTER_TARGET) && !defined(CORES3_LITE_TARGET)
 PMIC_BQ25896 pmic;
 #endif
@@ -181,6 +183,26 @@ static const char* SYSTEM_PROMPT =
     "\nAvailable pins: " AVAILABLE_GPIO_LIST_STR
     "\nGPIO states: ON or OFF"
     "\nServo angles: 0-180 degrees"
+    "\n\nSENSOR READING FORMAT:"
+    "\nWhen user asks about sensors, use placeholder syntax: [SENSOR:device:parameter]"
+    "\n\nAvailable sensors:"
+    "\n- bme688: temperature, humidity, pressure, gas, all"
+    "\n- adxl345: x, y, z, all (acceleration in g)"
+    "\n- hall: detect (magnetic field detection)"
+    "\n- rfid: uid (RFID card UID)"
+    "\n\nSensor examples:"
+    "\nUser: 'What's the temperature?'"
+    "\nResponse: The current temperature is [SENSOR:bme688:temperature] degrees Celsius."
+    "\nActions: none"
+    "\n\nUser: 'Am I tilted?'"
+    "\nResponse: You're tilted at [SENSOR:adxl345:x] g on the X axis."
+    "\nActions: none"
+    "\n\nUser: 'Is there a magnet nearby?'"
+    "\nResponse: Magnetic field is [SENSOR:hall:detect]."
+    "\nActions: none"
+    "\n\nUser: 'Check my RFID card'"
+    "\nResponse: Your card UID is [SENSOR:rfid:uid]."
+    "\nActions: none"
     "\n\nEXAMPLES:"
     "\nUser: 'Turn on pin 11'"
     "\nResponse: Sure! I've activated pin 11 for you."
@@ -711,6 +733,46 @@ static void wifiEnsureConnected() {
     Serial.println("[WiFi] Connection failed after all attempts");
 }
 
+// Replace sensor placeholders in GPT response
+// Format: [SENSOR:device:parameter] -> actual sensor value
+static String replaceSensorPlaceholders(const String& text) {
+    String result = text;
+    int placeholderStart = 0;
+
+    while ((placeholderStart = result.indexOf("[SENSOR:", placeholderStart)) >= 0) {
+        int placeholderEnd = result.indexOf("]", placeholderStart);
+        if (placeholderEnd < 0) break; // Malformed placeholder
+
+        // Extract full placeholder: [SENSOR:device:parameter]
+        String placeholder = result.substring(placeholderStart, placeholderEnd + 1);
+
+        // Extract device:parameter (skip "[SENSOR:")
+        String content = result.substring(placeholderStart + 8, placeholderEnd);
+
+        // Split by ':'
+        int colonPos = content.indexOf(':');
+        if (colonPos > 0) {
+            String device = content.substring(0, colonPos);
+            String parameter = content.substring(colonPos + 1);
+
+            // Read sensor value
+            String value = sensorManager.readSensorByString(device, parameter);
+
+            // Replace placeholder with actual value
+            result.replace(placeholder, value);
+            Serial.printf("[Sensor] Replaced %s with '%s'\n", placeholder.c_str(), value.c_str());
+
+            // Continue search after replacement
+            placeholderStart += value.length();
+        } else {
+            // Invalid format, skip
+            placeholderStart = placeholderEnd + 1;
+        }
+    }
+
+    return result;
+}
+
 // OpenAI query task - NOW WITH STREAMING SUPPORT
 static void openaiTask(void *arg) {
     Serial.println("[OpenAI] Task started - STREAMING MODE");
@@ -846,9 +908,12 @@ static void openaiTask(void *arg) {
         // Show ONLY display text on screen
         Serial.printf("[CuteAssistant] Displaying: %s\n", displayText.c_str());
         Serial.printf("[CuteAssistant] Physical Action: %s\n", parsed.action.c_str());
-        
+
+        // Replace sensor placeholders with actual readings
+        String finalText = replaceSensorPlaceholders(displayText);
+
         uiManager.postStateChange(UIState::ShowingResponse);
-        uiManager.postResponse(displayText.c_str());
+        uiManager.postResponse(finalText.c_str());
         
         ledRequest(LEDState::Off);
         
@@ -1002,13 +1067,21 @@ void setup() {
 
     // Create LED request queue
     g_led_queue = xQueueCreate(8, sizeof(uint8_t));
-    
+
     // Create audio chunk streaming queue
     g_audio_chunk_queue = xQueueCreate(MAX_AUDIO_CHUNKS, sizeof(AudioChunk));
     if (!g_audio_chunk_queue) {
         Serial.println("[Setup] Error: Failed to create audio chunk queue");
     } else {
         Serial.println("[Setup] Audio streaming queue created successfully");
+    }
+
+    // Initialize sensor manager (I2C sensors on GPIO11/12 for CoreS3-Lite)
+    Serial.println("[Setup] Initializing sensors...");
+    if (sensorManager.init()) {
+        Serial.printf("[Setup] Sensors initialized: %s\n", sensorManager.getAvailableSensors().c_str());
+    } else {
+        Serial.println("[Setup] Warning: No sensors detected - continuing without sensor support");
     }
 
     // Initialize primary input control
